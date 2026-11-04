@@ -162,6 +162,8 @@ const CFG = {
   NOME: 'Tchau Papel FBC 2.0',
   LS_KEY: 'tchauPapel2.v1',
   LS_ESTADO: 'tchauPapel2.estado',
+  LS_BASE: 'tchauPapel2.base',
+  LS_SYNC: 'tchauPapel2.sync',
   API_URL: 'https://script.google.com/macros/s/AKfycbx0vRkGu1rrAtLBOmCE6cNv0XRdiFtfw5soFNpfss2jOtry5XlZS6sxtHM3WZ7vYp_O/exec',      // Google Apps Script (recebe o CSV e serve o estado)
   API_TOKEN: '8da926a88e83532b040d6349',
   LOTE: {nec:'50010832', imed:'50010833', obs:'50010834'}   // códigos fixos das perguntas padrão do lote
@@ -196,13 +198,16 @@ function expand(b){ // base v3 compacta -> objetos usados pelo app
   b.os = b.os.map(r=>{ const a=b.AT[r[4]]; return {id:r[0],patio:b.P[r[1]],loc:b.LC[r[2]],ativo:r[3],atv:a,desc:b.DS[r[5]],tmin:r[6],tipo:parseAtv(a).equip||'',lt:r[7]>=0?b.lotes[r[7]].id:''}; });
   return b;
 }
-const EMB = expand(JSON.parse($('#base-json').textContent));
+let EMB = expand(JSON.parse($('#base-json').textContent));
+(function usarBaseArmazenada(){ // base mais nova baixada do Apps Script (gerada a partir do Dados.xlsx)
+  try{ const C = JSON.parse(localStorage.getItem(CFG.LS_BASE)||'null'); if(C && C.v===3 && C.geradoEm && C.geradoEm > (EMB.geradoEm||'')){ if(!C.materiais) C.materiais = EMB.materiais; EMB = expand(C); } }catch(e){}
+})();
 (function aplicarEstado(){ // estado dinâmico (vem do Apps Script): OS já tratadas + notas abertas
   try{
     let E = JSON.parse($('#estado-json').textContent);
     try{ const C = JSON.parse(localStorage.getItem('tchauPapel2.estado')||'null'); if(C && C.geradoEm && (!E.geradoEm || C.geradoEm > E.geradoEm)) E = C; }catch(e){}
     const f = new Set((E.feitas||[]).map(String)); if(f.size) EMB.os = EMB.os.filter(o=>!f.has(o.id));
-    EMB.notas = E.notas||[]; if(E.geradoEm) EMB.geradoEm = E.geradoEm; }catch(e){}
+    EMB.notas = E.notas||[]; EMB.estadoEm = E.geradoEm||''; }catch(e){}
 })();
 let S = loadState();
 let B = pickBase();
@@ -282,16 +287,18 @@ function render(){
   if(tab!=='ordens'){ const sb=$('#selbar'); if(sb) sb.remove(); }
   $('#app').innerHTML = `
     <header class="top"><h1>${CFG.NOME}</h1>
-      <span class="chip ${stale?'warn':''}" title="Base gerada em ${esc(dispDT(parseDT(B.geradoEm)))}">${stale?'Base com '+idade+' d':'Base ok'}</span></header>
+      <span class="chip ${stale?'warn':''}" title="Base gerada em ${esc(dispDT(parseDT(B.geradoEm)))}">${stale?'Sem sincronizar há '+idade+' d':'Base ok'}</span><span id="net" class="chip warn" style="${navigator.onLine?'display:none':''}">Sem internet</span></header>
     <main id="view"></main>
     <nav class="bottom">
       ${navBtn('menu','Menu',ICON.home,0,nav)}${navBtn('ordens','Plano',ICON.list,0,nav)}
-      ${navBtn('registros','Registros',ICON.clock, S.apont.length+S.nrav.length,nav)}${navBtn('exportar','Exportar',ICON.out, pend,nav)}${navBtn('lotes','Formulários',ICON.note,lc.obr+lc.pro,nav)}${navBtn('acomp','Acomp.',ICON.chart,0,nav)}
+      ${navBtn('registros','Registros',ICON.clock, S.apont.length+S.nrav.length,nav)}${navBtn('exportar','Subir',ICON.out, pend,nav)}${navBtn('lotes','Formulários',ICON.note,lc.obr+lc.pro,nav)}${navBtn('acomp','Acomp.',ICON.chart,0,nav)}
     </nav>`;
   TABS[tab]();
 }
 function navBtn(id,label,icon,badge,cur){ return `<button class="${cur===id?'on':''}" data-act="tab" data-t="${id}">${icon}${label}${badge?`<span class="bdg">${badge}</span>`:''}</button>`; }
-function baseAgeDays(){ return Math.floor((Date.now()-parseDT(B.geradoEm).getTime())/86400000); }
+function lastSync(){ try{ return +localStorage.getItem(CFG.LS_SYNC)||0; }catch(e){ return 0; } }
+function baseAgeDays(){ const t = lastSync() || parseDT(B.geradoEm).getTime(); return Math.max(0,Math.floor((Date.now()-t)/86400000)); }
+function baseGenDays(){ return Math.max(0,Math.floor((Date.now()-parseDT(B.geradoEm).getTime())/86400000)); }
 function go(tab){
   if((tab==='ordens'||tab==='extra'||tab==='notas') && !S.equipe.length){ toast('Escolha a equipe para continuar.'); openTeam(()=>go(tab)); return; }
   S.ui.tab = tab; save(); render(); window.scrollTo(0,0); }
@@ -307,7 +314,7 @@ function viewMenu(){
   const st = statusMap(); const pendentes = B.os.filter(o=>!st.has(o.id)).length;
   let banner = '';
   if(v && v.novaVersao) banner = `<div class="banner warn">Existe uma versão mais nova (${esc(dispDT(parseDT(v.novaVersao)))}). <button class="btn sm pri" data-act="reload">Atualizar agora</button></div>`;
-  else if(stale) banner = `<div class="banner warn">A base tem ${idade} dias. Conecte-se à internet e atualize para ver as OS mais recentes. Offline, o app continua com a base deste aparelho.</div>`;
+  else if(stale) banner = `<div class="banner warn">Faz ${idade} dias que este aparelho não sincroniza. Conecte-se à internet para ver as OS e notas mais recentes. Sem internet, o app continua com os dados que já estão aqui.</div>`;
   else banner = `<div class="banner ok">Base em dia.</div>`;
   $('#view').innerHTML = `
   <div class="menu">
@@ -326,7 +333,7 @@ function viewMenu(){
     <div class="kpis"><div class="kpi"><b>${apHoje.length}</b>apontamentos</div><div class="kpi"><b>${osHoje}</b>OS apontadas</div><div class="kpi"><b>${nrHoje}</b>NRAV/NAPL</div></div>
   </div>
   <div class="card"><h2>Base de dados</h2>
-    <div><b>Gerada em ${esc(dispDT(parseDT(B.geradoEm)))}</b> <span class="mut small">(${idade===0?'hoje':'há '+idade+' d'})</span></div>
+    <div><b>Gerada em ${esc(dispDT(parseDT(B.geradoEm)))}</b> <span class="mut small">(${baseGenDays()===0?'hoje':'há '+baseGenDays()+' d'})</span></div>
     <div class="small mut">Última verificação neste aparelho: ${v&&v.quando?esc(dispDT(new Date(v.quando)))+(v.ok?'':' (sem conexão)'):'nunca'}</div>
     ${banner}
     <div class="row" style="margin-top:10px"><button class="btn" data-act="verif">Verificar atualização</button><button class="btn" data-act="reload">Recarregar página</button></div>
@@ -978,15 +985,15 @@ function allDays(){
 function viewExportar(){
   const days = allDays();
   if(!EXP_DAY || !days.includes(EXP_DAY)) EXP_DAY = days.includes(isoDate(new Date())) ? isoDate(new Date()) : (days[0]||null);
-  if(!EXP_DAY){ $('#view').innerHTML = '<div class="card"><div class="empty">Nada para exportar ainda.</div></div>'; return; }
+  if(!EXP_DAY){ $('#view').innerHTML = '<div class="card"><div class="empty">Nada para subir ainda.</div></div>'; return; }
   const groups = exportGroups(EXP_DAY);
   $('#view').innerHTML = `<div class="card"><h2>Dia</h2><select id="expday">${days.map(d=>`<option value="${d}" ${d===EXP_DAY?'selected':''}>${esc(dispD(parseD(d)))}</option>`).join('')}</select>
-    <div class="small mut" style="margin-top:6px">Um arquivo CSV por equipe, com apontadas, NRAV/NAPL, ordens extra, notas, materiais e formulários. Envie ao grupo do Teams para o fluxo ler.</div></div>
+    <div class="small mut" style="margin-top:6px">Cada equipe sobe um arquivo com apontadas, NRAV/NAPL, ordens extra, notas, materiais e formulários. É preciso estar com internet: sem sinal, nada é enviado e tudo continua salvo neste aparelho. Subir de novo não duplica nada.</div></div>
     ${groups.map((g,i)=>`<div class="card"><h2>${esc(eqNames(g.eq)||'Sem equipe')}</h2>
       <div class="small">${g.ap.length} apontamento(s) · ${g.linhas} linha(s) de apontadas · ${g.nr.length} NRAV/NAPL · ${g.ex.length} ordem(ns) extra · ${g.nt.length} nota(s) · ${g.nmat} material(is)</div>
-      <div class="small mut">${g.pend?`${g.pend} item(ns) ainda não enviado(s)`:'Tudo já enviado — reexportar gera os mesmos IDs.'}</div>
-      ${(()=>{ const f = loteFaltas(g); return f.obr.length?`<div class="banner bad">Fechamento bloqueado: ${f.obr.length} OS com formulário pendente (${esc(f.obr.slice(0,6).join(', '))}${f.obr.length>6?'…':''}). <button class="btn sm pri" data-act="tab" data-t="lotes">Preencher formulários</button></div>`:''; })()}
-      <div class="row" style="margin-top:10px"><button class="btn pri" data-act="dl" data-g="${i}" ${loteFaltas(g).obr.length?'disabled':''}>Baixar CSV</button>${navigator.canShare?`<button class="btn" data-act="share" data-g="${i}" ${loteFaltas(g).obr.length?'disabled':''}>Compartilhar</button>`:''}</div></div>`).join('')}`;
+      <div class="small mut">${g.pend?`${g.pend} item(ns) ainda não enviado(s)`:'Tudo já enviado. Subir de novo é seguro (não duplica).'}</div>
+      ${(()=>{ const f = loteFaltas(g); return f.obr.length?`<div class="banner bad">Envio bloqueado: ${f.obr.length} OS com formulário pendente (${esc(f.obr.slice(0,6).join(', '))}${f.obr.length>6?'…':''}). <button class="btn sm pri" data-act="tab" data-t="lotes">Preencher formulários</button></div>`:''; })()}
+      <div class="row" style="margin-top:10px"><button class="btn pri" data-act="up" data-g="${i}" ${(loteFaltas(g).obr.length||UP_BUSY)?'disabled':''}>${UP_BUSY===i+1?'Enviando…':'Subir apontamentos'}</button><button class="btn" data-act="dl" data-g="${i}" ${UP_BUSY?'disabled':''}>Baixar CSV (reserva)</button></div></div>`).join('')}`;
   $('#expday').onchange = e => { EXP_DAY = e.target.value; viewExportar(); };
 }
 function exportGroups(day){
@@ -1033,34 +1040,42 @@ function download(f){
 /* ===== Envio direto ao Google Apps Script (que repassa ao Excel via Power Automate) ===== */
 async function apiEnviar(f){
   if(!CFG.API_URL || CFG.API_URL.startsWith('__')) throw new Error('envio não configurado');
-  const r = await fetch(CFG.API_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify({token:CFG.API_TOKEN, nome:f.name, csv:f.text})});
+  const r = await fetchT(CFG.API_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({token:CFG.API_TOKEN, nome:f.name, csv:f.text})}, 45000);
   let j = null; try{ j = await r.json(); }catch(e){}
   if(!j || !j.ok) throw new Error((j && j.erro) || ('HTTP '+r.status));
   return j;
 }
-async function doExport(i, share){
+let UP_BUSY = 0;
+async function doExport(i, modo){
+  if(UP_BUSY) return;
   const g = exportGroups(EXP_DAY)[i];
-  if(loteFaltas(g).obr.length){ toast('Há formulários pendentes. Preencha antes de exportar.', 'Ver formulários', ()=>go('lotes')); return; }
+  if(!g) return;
+  if(loteFaltas(g).obr.length){ toast('Há formulários pendentes. Preencha antes de subir.', 'Ver formulários', ()=>go('lotes')); return; }
   const files = buildFiles(g, EXP_DAY);
   if(!files.length) return;
-  try{
-    for(const f of files) await apiEnviar(f);
-    markExported(g); render();
-    toast(`Enviado com sucesso (${files.length} arquivo). O Excel é atualizado automaticamente.`, null, null, 9000);
+  if(modo==='dl'){ // reserva: só baixa o arquivo; NÃO marca como enviado
+    files.forEach((f,k)=>setTimeout(()=>download(f), k*600));
+    toast('CSV baixado. Ele só entra no Excel depois de enviado: suba pelo app quando houver internet.', null, null, 9000);
     return;
-  }catch(e){ window.SP_ERR = (e && e.message) || String(e); console.warn('Envio direto indisponível:', window.SP_ERR); }
-  if(share){
-    const fl = files.map(f=>new File([f.text], f.name, {type:'text/csv'}));
-    if(navigator.canShare && navigator.canShare({files:fl})){
-      try{ await navigator.share({files:fl, title:'Apontamentos '+EXP_DAY}); markExported(g); render(); return; }catch(e){ if(e.name==='AbortError') return; }
-    }
-    toast('Compartilhamento indisponível; baixando os arquivos.');
   }
-  for(let k=0;k<files.length;k++) setTimeout(()=>download(files[k]), k*600);
-  markExported(g); setTimeout(render, files.length*600+100);
-  toast(`${files.length} arquivo(s) gerado(s).`);
-  setTimeout(()=>showFiles(files), files.length*600+300);
+  UP_BUSY = i+1; viewExportar();
+  try{
+    if(!(await conectado())){
+      toast('Sem internet (ou servidor indisponível). Nada foi enviado e seus apontamentos continuam salvos. Tente de novo quando tiver sinal.', null, null, 10000);
+      return;
+    }
+    for(const f of files){
+      try{ await apiEnviar(f); }
+      catch(e){
+        const m = (e && e.name==='AbortError') ? 'tempo esgotado' : ((e && e.message) || 'erro');
+        toast(`Falha no envio (${m}). Nada foi marcado como enviado. Tente de novo.`, null, null, 10000);
+        return;
+      }
+    }
+    markExported(g);
+    toast(`Enviado com sucesso (${files.length} arquivo). O Excel é atualizado em alguns minutos.`, null, null, 9000);
+  } finally { UP_BUSY = 0; render(); }
 }
 function copyText(txt){
   const fb = ()=>{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.cssText='position:fixed;opacity:0;top:0'; document.body.appendChild(ta); ta.select(); let ok=false; try{ ok=document.execCommand('copy'); }catch(e){} ta.remove(); return ok; };
@@ -1148,29 +1163,37 @@ function locRow(g){
 }
 
 /* ============ ATUALIZAÇÃO ============ */
+function fetchT(url, opts, ms){ // fetch com tempo limite
+  const c = new AbortController(); const t = setTimeout(()=>c.abort(), ms);
+  return fetch(url, Object.assign({signal:c.signal}, opts||{})).finally(()=>clearTimeout(t));
+}
+const apiOk = () => CFG.API_URL && !CFG.API_URL.startsWith('__');
+const apiUrl = q => CFG.API_URL + (CFG.API_URL.includes('?')?'&':'?') + q + '&t=' + Date.now();
+async function conectado(){ // confirma que há internet de verdade (não só "sinal") e que o servidor responde
+  if(!navigator.onLine || !apiOk()) return false;
+  try{ const r = await fetchT(apiUrl('r=ping'), {cache:'no-store'}, 8000); return r.ok; }catch(e){ return false; }
+}
 async function verificar(silent){
   const v = {quando:Date.now(), ok:false, novaVersao:null};
   try{
-    if(CFG.API_URL && !CFG.API_URL.startsWith('__')){
-      const res = await fetch(CFG.API_URL + (CFG.API_URL.includes('?')?'&':'?') + 't=' + Date.now(), {cache:'no-store'});
+    if(apiOk()){
+      const res = await fetchT(apiUrl('r=estado'), {cache:'no-store'}, 15000);
       const E = await res.json();
       v.ok = !!E && Array.isArray(E.feitas);
-      if(v.ok && E.geradoEm && E.geradoEm > (EMB.geradoEm||'')){
-        try{ localStorage.setItem(CFG.LS_ESTADO, JSON.stringify(E)); }catch(e){}
-        v.novaVersao = E.geradoEm;
+      if(v.ok){
+        if(E.geradoEm && E.geradoEm > (EMB.estadoEm||'')){ try{ localStorage.setItem(CFG.LS_ESTADO, JSON.stringify(E)); }catch(e){} v.novaVersao = E.geradoEm; }
+        if(E.baseEm && E.baseEm > (EMB.geradoEm||'')){
+          const rb = await fetchT(apiUrl('r=base'), {cache:'no-store'}, 40000);
+          const Bn = await rb.json();
+          if(Bn && Bn.v===3 && Bn.geradoEm){ try{ localStorage.setItem(CFG.LS_BASE, JSON.stringify(Bn)); v.novaVersao = Bn.geradoEm; }catch(e){} }
+        }
+        try{ localStorage.setItem(CFG.LS_SYNC, String(Date.now())); }catch(e){}
       }
-    } else {
-      const url = location.href.split('#')[0].split('?')[0] + '?v=' + Date.now();
-      const res = await fetch(url, {cache:'no-store'});
-      const txt = await res.text();
-      const m = /id="estado-json"[^>]*>\s*\{\s*"geradoEm"\s*:\s*"([^"]+)"/.exec(txt);
-      v.ok = !!m;
-      if(m && m[1] > EMB.geradoEm) v.novaVersao = m[1];
     }
   }catch(e){}
   S.verif = v; save();
-  if(!silent) toast(v.novaVersao ? 'Há uma versão mais nova disponível.' : v.ok ? 'Você já está na versão mais recente.' : 'Sem conexão: usando a base deste aparelho.');
-  if(S.ui.tab==='inicio') render();
+  if(!silent) toast(v.novaVersao ? 'Há dados mais novos disponíveis.' : v.ok ? 'Você já está com os dados mais recentes.' : 'Sem conexão: usando os dados deste aparelho.');
+  if(S.ui.tab==='menu') render();
 }
 function recarregar(){ location.href = location.href.split('#')[0].split('?')[0] + '?v=' + Date.now(); }
 
@@ -1232,8 +1255,8 @@ document.addEventListener('click', async e => {
         S.apont = S.apont.filter(x=>x.id!==id); save(); render(); }
       break; }
     case 'nrdel': S.nrav = S.nrav.filter(n=>n.id!==id); save(); render(); break;
-    case 'dl': doExport(+b.dataset.g, false); break;
-    case 'share': doExport(+b.dataset.g, true); break;
+    case 'dl': doExport(+b.dataset.g, 'dl'); break;
+    case 'up': doExport(+b.dataset.g, 'up'); break;
   }
 });
 document.addEventListener('change', e => {
@@ -1266,6 +1289,8 @@ function openTeamFor(cb, cur){ // seletor de equipe reutilizável dentro da folh
 /* ============ INÍCIO ============ */
 S.sel = S.sel.filter(id => osById(id));
 render();
+window.addEventListener('online', ()=>{ const n=$('#net'); if(n) n.style.display='none'; verificar(true); });
+window.addEventListener('offline', ()=>{ const n=$('#net'); if(n) n.style.display=''; });
 if(navigator.onLine) verificar(true);
 </script>
 </body>
