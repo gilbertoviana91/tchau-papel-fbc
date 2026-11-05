@@ -281,12 +281,12 @@ function viewSoon(titulo, desc){
   $('#view').innerHTML = `<div class="card"><h2>${esc(titulo)}</h2><div class="empty"><b>Em breve</b><div>${esc(desc)}</div></div><button class="btn" data-act="tab" data-t="menu">Voltar ao menu</button></div>`;
 }
 const TABS = {menu:()=>viewMenu(), ordens:()=>viewOrdens(), registros:()=>viewRegistros(), exportar:()=>viewExportar(), acomp:()=>viewAcomp(), lotes:()=>viewLotes(),
-  extra:()=>viewExtra(), notas:()=>viewNotas(), pend:()=>viewPend()};
+  extra:()=>viewExtra(), notas:()=>viewNotas(), pend:()=>viewPend(), adm:()=>viewAdm()};
 function render(){
-  if(!TABS[S.ui.tab]) S.ui.tab = 'menu';
+  if(!TABS[S.ui.tab] || (S.ui.tab==='adm' && !(getAuth()||{}).adm)) S.ui.tab = 'menu';
   if((S.ui.tab==='ordens'||S.ui.tab==='extra'||S.ui.tab==='notas') && !S.equipe.length) S.ui.tab = 'menu';
   const tab = S.ui.tab;
-  const nav = (tab==='extra'||tab==='notas'||tab==='pend') ? 'menu' : tab;
+  const nav = (tab==='extra'||tab==='notas'||tab==='pend'||tab==='adm') ? 'menu' : tab;
   const idade = baseAgeDays();
   const stale = idade > CFG.DIAS_ALERTA_BASE;
   const lc = loteCounts();
@@ -316,6 +316,38 @@ function go(tab){
   if((tab==='ordens'||tab==='extra'||tab==='notas') && !S.equipe.length){ toast('Escolha a equipe para continuar.'); openTeam(()=>go(tab)); return; }
   S.ui.tab = tab; save(); render(); window.scrollTo(0,0); }
 
+/* ============ ADMINISTRAÇÃO DE ACESSOS ============ */
+let ADM = {lista:null, q:'', erro:''};
+async function admApi(acao, extra){
+  const a = getAuth() || {};
+  const r = await fetchT(CFG.API_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(Object.assign({acao, mat:a.mat, cod:a.cod}, extra||{}))}, 25000);
+  return r.json();
+}
+async function admCarregar(){
+  ADM.erro = '';
+  try{ const j = await admApi('adm_lista'); if(j && j.ok) ADM.lista = j.lista; else ADM.erro = 'Não foi possível carregar ('+((j&&j.erro)||'erro')+').'; }
+  catch(e){ ADM.erro = 'Sem conexão com o servidor.'; }
+  if(S.ui.tab==='adm') viewAdm(true);
+}
+function viewAdm(semBuscar){
+  const v = $('#view');
+  if(!semBuscar){ ADM.lista = null; admCarregar(); }
+  const q = ADM.q.trim().toLowerCase();
+  const l = (ADM.lista||[]).filter(p=>!q || (p.nome+' '+p.mat).toLowerCase().includes(q)).sort((a,b)=>cmp(a.nome,b.nome));
+  v.innerHTML = `<div class="card"><h2>Administração de acessos</h2>
+    <div class="small mut">Gere um código novo, revogue um acesso ou inclua alguém que não está na base. Entregue o código à pessoa: ele só aparece uma vez.</div>
+    <input type="search" id="admq" placeholder="Buscar nome ou matrícula" value="${esc(ADM.q)}" style="margin-top:10px">
+    <button class="btn" data-act="adm_inc" style="margin-top:8px">+ Incluir pessoa</button></div>
+    ${ADM.erro?`<div class="banner bad">${esc(ADM.erro)}</div>`:''}
+    ${ADM.lista===null&&!ADM.erro?'<div class="card"><div class="empty">Carregando…</div></div>':l.map(p=>`<div class="card"><div class="row" style="align-items:center"><div class="grow"><b>${esc(p.nome||p.mat)}</b> ${p.adm?'<span class="pill ed">admin</span>':''} ${p.ativo?'':'<span class="pill sent">revogado</span>'}<div class="small mut">${esc(p.mat)} · último envio: ${p.ult?esc(p.ult.replace('T',' ')):'nunca'}</div></div></div>
+      <div class="row" style="margin-top:8px;gap:8px"><button class="btn sm pri" data-act="adm_novo" data-id="${esc(p.mat)}">Novo código</button>${p.ativo&&!p.adm?`<button class="btn sm" data-act="adm_rev" data-id="${esc(p.mat)}">Revogar</button>`:''}</div></div>`).join('')||'<div class="card"><div class="empty">Ninguém encontrado.</div></div>'}`;
+}
+document.addEventListener('input', e => { if(e.target.id==='admq'){ ADM.q = e.target.value; const p = e.target.selectionStart; viewAdm(true); const n = $('#admq'); n.focus(); n.setSelectionRange(p,p); } });
+async function admAcao(acao, extra, ok){
+  try{ const j = await admApi(acao, extra); if(j && j.ok){ if(j.cod) await dialog({title:'Código gerado', body:`<p>Código de <b>${esc(ok)}</b>:</p><p style="font-size:30px;letter-spacing:4px;text-align:center"><b>${esc(j.cod)}</b></p><p class="small">Anote e entregue agora: não será mostrado de novo.</p>`, ok:'Entendi', cancel:''}); else toast('Feito.'); admCarregar(); }
+    else toast('Não foi possível: '+((j&&j.erro)||'erro')); }
+  catch(e){ toast('Sem conexão com o servidor.'); }
+}
 /* ============ MENU ============ */
 function viewMenu(){
   const idade = baseAgeDays(), stale = idade > CFG.DIAS_ALERTA_BASE;
@@ -339,7 +371,7 @@ function viewMenu(){
   </div>
   ${(()=>{ const c = loteCounts(); return (c.obr||c.pro)?`<div class="card"><h2>Formulários</h2>${c.obr?`<div class="banner bad">${c.obr} OS com Formulário Inspeção pendente.</div>`:''}${c.pro?`<div class="banner bad">${c.pro} OS com Formulário Prospecção pendente.</div>`:''}<button class="btn pri" data-act="tab" data-t="lotes">Abrir formulários</button></div>`:''; })()}
   ${(()=>{ const k = S.notas.filter(n=>n.auto&&!n.cod).length; return k?`<div class="card"><div class="banner bad" style="margin-top:0">${k} nota(s) automática(s) aguardando codificação.</div><button class="btn pri" data-act="tab" data-t="notas">Abrir Notas</button></div>`:''; })()}
-  ${(()=>{ const a = getAuth(); return a?`<div class="card"><div class="row" style="align-items:center"><div class="grow small">Acesso: <b>${esc(a.nome||a.mat)}</b> <span class="mut">(${esc(a.mat)})</span></div><button class="btn sm" data-act="logout">Sair</button></div></div>`:''; })()}
+  ${(()=>{ const a = getAuth(); return a?`<div class="card"><div class="row" style="align-items:center"><div class="grow small">Acesso: <b>${esc(a.nome||a.mat)}</b> <span class="mut">(${esc(a.mat)})</span></div><button class="btn sm" data-act="logout">Sair</button></div>${a.adm?'<button class="btn pri" data-act="tab" data-t="adm" style="margin-top:8px">Administração de acessos</button>':''}</div>`:''; })()}
   <div class="card"><h2>Equipe</h2>
     ${S.equipe.length?`<div style="margin-bottom:8px">${esc(eqNames(S.equipe))}</div>`:'<div class="mut" style="margin-bottom:8px">Nenhuma equipe escolhida.</div>'}
     <button class="btn pri" data-act="team">${S.equipe.length?'Alterar equipe':'Escolher equipe'}</button>
@@ -1112,7 +1144,7 @@ function showLogin(msg){
     try{
       const r = await fetchT(CFG.API_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify({acao:'login', mat, cod})}, 20000);
       const j = await r.json();
-      if(j && j.ok){ setAuth({mat, cod, nome:j.nome||''}); render(); verificar(true); }
+      if(j && j.ok){ setAuth({mat, cod, nome:j.nome||'', adm:!!j.adm}); render(); verificar(true); }
       else showLogin(j && j.erro==='bloqueado' ? 'Muitas tentativas. Aguarde 15 minutos.' : 'Matrícula ou código inválidos.');
     }catch(e){ showLogin('Sem conexão com o servidor. Verifique a internet e tente de novo.'); }
   };
@@ -1243,7 +1275,12 @@ async function conectado(){ // confirma que há internet de verdade (não só "s
   if(!navigator.onLine || !apiOk()) return false;
   try{ const r = await fetchT(apiUrl('r=ping'), {cache:'no-store'}, 8000); return r.ok; }catch(e){ return false; }
 }
+async function refreshAuth(){
+  const a = getAuth(); if(!a) return;
+  try{ const j = await admApi('login'); if(j && j.ok){ if(!!j.adm!==!!a.adm){ a.adm=!!j.adm; setAuth(a); render(); } } else if(j && j.erro==='acesso'){ setAuth(null); showLogin('Seu acesso foi revogado ou o código mudou.'); } }catch(e){}
+}
 async function verificar(silent){
+  refreshAuth();
   const v = {quando:Date.now(), ok:false, novaVersao:null};
   try{
     if(apiOk()){
@@ -1290,6 +1327,9 @@ document.addEventListener('click', async e => {
   switch(act){
     case 'tab': go(b.dataset.t); break;
     case 'mf': openMulti(b.dataset.k); break;
+    case 'adm_novo': { const p = (ADM.lista||[]).find(x=>x.mat===id); if(p && await dialog({title:'Gerar novo código?', body:`<p>O código atual de <b>${esc(p.nome||id)}</b> deixa de valer.</p>`, ok:'Gerar'})) admAcao('adm_novo', {alvo:id}, p.nome||id); break; }
+    case 'adm_rev': { const p = (ADM.lista||[]).find(x=>x.mat===id); if(p && await dialog({title:'Revogar acesso?', body:`<p><b>${esc(p.nome||id)}</b> não poderá mais enviar. Um novo código reativa.</p>`, ok:'Revogar', danger:true})) admAcao('adm_revogar', {alvo:id}); break; }
+    case 'adm_inc': { const m = prompt('Matrícula da pessoa:'); if(!m) break; const n = prompt('Nome:'); if(!n) break; admAcao('adm_incluir', {alvo:m.trim(), nome:n.trim()}, n.trim()); break; }
     case 'logout': if(await dialog({title:'Sair?', body:'<p>Para enviar apontamentos de novo será preciso entrar com matrícula e código. O que está salvo neste aparelho continua aqui.</p>', ok:'Sair', danger:true})){ setAuth(null); render(); } break;
     case 'team': openTeam(); break;
     case 'lote': openLote(id, b.dataset.lt); break;
