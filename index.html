@@ -22,8 +22,9 @@ html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 #app{max-width:760px;margin:0 auto;min-height:100vh;padding-bottom:calc(150px + env(safe-area-inset-bottom))}
-header.top{position:sticky;top:0;z-index:20;background:var(--brand);color:var(--on-brand);padding:calc(10px + env(safe-area-inset-top)) 14px 10px;display:flex;align-items:center;gap:10px}
+header.top{background:var(--brand);color:var(--on-brand);padding:calc(10px + env(safe-area-inset-top)) 14px 10px;display:flex;align-items:center;gap:10px}
 header.top h1{font-size:17px;margin:0;font-weight:650;flex:1;letter-spacing:.2px}
+.topw{position:sticky;top:0;z-index:20}
 .chip{font-size:12px;padding:3px 9px;border-radius:99px;background:rgba(255,255,255,.16);white-space:nowrap}
 .chip.warn{background:#ffd9a0;color:#5a2d00}
 main{padding:12px}
@@ -50,6 +51,12 @@ nav.bottom button.on{color:var(--brand2)}
 nav.bottom .bdg{position:absolute;top:3px;left:55%;background:var(--bad);color:#fff;border-radius:99px;font-size:11px;min-width:18px;padding:0 5px;line-height:18px}
 /* filtros */
 .filters{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.msel{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:44px;padding:8px 12px;border:1px solid var(--line,#c8ccd0);border-radius:10px;background:var(--card,#fff);text-align:left;min-width:0}
+.msel span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.msel.on{border-color:var(--brand);font-weight:600}
+.updbar{display:flex;align-items:center;gap:10px;padding:10px 14px;font-size:15px;font-weight:600}
+.updbar.warn{background:#ffb400;color:#2b1d00}.updbar.ok{background:var(--okbg);color:var(--ok);font-size:13px;font-weight:500;padding:5px 14px}
+.updbar .grow{flex:1}.updbar button{border:0;border-radius:99px;padding:8px 16px;font-weight:700;background:#2b1d00;color:#fff}.updbar.ok button{background:transparent;color:inherit;text-decoration:underline;padding:2px 4px;font-weight:500}
+.login{max-width:380px;margin:0 auto;padding:40px 20px}.login input{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #c8ccd0;border-radius:10px}
 .filters .full{grid-column:1/-1}
 select,input[type=text],input[type=search],input[type=date],input[type=time],textarea{width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 10px;min-height:42px;font-size:15px}
 .tools{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 2px}
@@ -165,7 +172,7 @@ const CFG = {
   LS_BASE: 'tchauPapel2.base',
   LS_SYNC: 'tchauPapel2.sync',
   API_URL: 'https://script.google.com/macros/s/AKfycbx0vRkGu1rrAtLBOmCE6cNv0XRdiFtfw5soFNpfss2jOtry5XlZS6sxtHM3WZ7vYp_O/exec',      // Google Apps Script (recebe o CSV e serve o estado)
-  API_TOKEN: '8da926a88e83532b040d6349',
+  LS_AUTH: 'tchauPapel2.auth',
   LOTE: {nec:'50010832', imed:'50010833', obs:'50010834'}   // códigos fixos das perguntas padrão do lote
 };
 
@@ -212,9 +219,9 @@ let EMB = expand(JSON.parse($('#base-json').textContent));
 let S = loadState();
 let B = pickBase();
 
-function defaultState(){ return { equipe:[], sel:[], apont:[], nrav:[], extra:[], notas:[], nvinc:{}, lote:{}, f:{patio:'',loc:'',tipo:'',q:''}, ui:{det:true,ocultar:false,descSheet:true,acompAll:false,acompSo:true,tab:'menu'}, verif:null }; }
+function defaultState(){ return { equipe:[], sel:[], apont:[], nrav:[], extra:[], notas:[], nvinc:{}, lote:{}, f:{patios:[],locs:[],tipo:'',q:''}, ui:{det:true,ocultar:false,descSheet:true,acompAll:false,acompSo:true,tab:'menu'}, verif:null }; }
 function loadState(){
-  try{ const raw = localStorage.getItem(CFG.LS_KEY); if(raw){ const s = Object.assign(defaultState(), JSON.parse(raw)); s.ui = Object.assign(defaultState().ui, s.ui); s.f = Object.assign(defaultState().f, s.f); return s; } }catch(e){}
+  try{ const raw = localStorage.getItem(CFG.LS_KEY); if(raw){ const s = Object.assign(defaultState(), JSON.parse(raw)); s.ui = Object.assign(defaultState().ui, s.ui); s.f = Object.assign(defaultState().f, s.f); if(s.f.patio){ s.f.patios=[s.f.patio]; } if(s.f.loc){ s.f.locs=[s.f.loc]; } delete s.f.patio; delete s.f.loc; if(!Array.isArray(s.f.patios)) s.f.patios=[]; if(!Array.isArray(s.f.locs)) s.f.locs=[]; return s; } }catch(e){}
   return defaultState();
 }
 let persistFail = false;
@@ -283,17 +290,23 @@ function render(){
   const idade = baseAgeDays();
   const stale = idade > CFG.DIAS_ALERTA_BASE;
   const lc = loteCounts();
-  const pend = S.apont.filter(r=>!r.exportadoEm||r.alteradoEm).length + S.nrav.filter(n=>!n.exportadoEm).length + S.extra.filter(x=>!x.exportadoEm||x.alteradoEm).length + S.notas.filter(n=>!n.exportadoEm).length;
+  const pend = S.apont.filter(r=>!r.exportadoEm||r.alteradoEm).length + S.nrav.filter(n=>!n.exportadoEm).length + S.extra.filter(x=>!x.exportadoEm||x.alteradoEm).length + S.notas.filter(n=>!n.exportadoEm&&n.cod).length;
   if(tab!=='ordens'){ const sb=$('#selbar'); if(sb) sb.remove(); }
   $('#app').innerHTML = `
-    <header class="top"><h1>${CFG.NOME}</h1>
-      <span class="chip ${stale?'warn':''}" title="Base gerada em ${esc(dispDT(parseDT(B.geradoEm)))}">${stale?'Sem sincronizar há '+idade+' d':'Base ok'}</span><span id="net" class="chip warn" style="${navigator.onLine?'display:none':''}">Sem internet</span></header>
+    <div class="topw"><header class="top"><h1>${CFG.NOME}</h1>
+      <span class="chip ${stale?'warn':''}" title="Base gerada em ${esc(dispDT(parseDT(B.geradoEm)))}">${stale?'Sem sincronizar há '+idade+' d':'Base ok'}</span><span id="net" class="chip warn" style="${navigator.onLine?'display:none':''}">Sem internet</span></header>${updBar(stale,idade)}</div>
     <main id="view"></main>
     <nav class="bottom">
       ${navBtn('menu','Menu',ICON.home,0,nav)}${navBtn('ordens','Plano',ICON.list,0,nav)}
       ${navBtn('registros','Registros',ICON.clock, S.apont.length+S.nrav.length,nav)}${navBtn('exportar','Subir',ICON.out, pend,nav)}${navBtn('lotes','Formulários',ICON.note,lc.obr+lc.pro,nav)}${navBtn('acomp','Acomp.',ICON.chart,0,nav)}
     </nav>`;
   TABS[tab]();
+}
+function updBar(stale, idade){
+  const v = S.verif;
+  if(v && v.novaVersao) return `<div class="updbar warn"><span class="grow">⚠ Há dados novos (${esc(dispDT(parseDT(v.novaVersao)))}). Atualize antes de trabalhar.</span><button data-act="reload">Atualizar agora</button></div>`;
+  if(stale) return `<div class="updbar warn"><span class="grow">⚠ Base com ${idade} dias sem sincronizar. Conecte-se e verifique.</span><button data-act="verif">Verificar</button></div>`;
+  return `<div class="updbar ok"><span class="grow">✓ Base em dia${v&&v.quando?' · verificada '+esc(dispDT(new Date(v.quando))):''}</span><button data-act="verif">Verificar agora</button></div>`;
 }
 function navBtn(id,label,icon,badge,cur){ return `<button class="${cur===id?'on':''}" data-act="tab" data-t="${id}">${icon}${label}${badge?`<span class="bdg">${badge}</span>`:''}</button>`; }
 function lastSync(){ try{ return +localStorage.getItem(CFG.LS_SYNC)||0; }catch(e){ return 0; } }
@@ -325,6 +338,8 @@ function viewMenu(){
     <button class="mbtn" data-act="tab" data-t="acomp">${ICON.chart}<b>Acompanhamento</b><span>Andamento do plano</span></button>
   </div>
   ${(()=>{ const c = loteCounts(); return (c.obr||c.pro)?`<div class="card"><h2>Formulários</h2>${c.obr?`<div class="banner bad">${c.obr} OS com Formulário Inspeção pendente.</div>`:''}${c.pro?`<div class="banner bad">${c.pro} OS com Formulário Prospecção pendente.</div>`:''}<button class="btn pri" data-act="tab" data-t="lotes">Abrir formulários</button></div>`:''; })()}
+  ${(()=>{ const k = S.notas.filter(n=>n.auto&&!n.cod).length; return k?`<div class="card"><div class="banner bad" style="margin-top:0">${k} nota(s) automática(s) aguardando codificação.</div><button class="btn pri" data-act="tab" data-t="notas">Abrir Notas</button></div>`:''; })()}
+  ${(()=>{ const a = getAuth(); return a?`<div class="card"><div class="row" style="align-items:center"><div class="grow small">Acesso: <b>${esc(a.nome||a.mat)}</b> <span class="mut">(${esc(a.mat)})</span></div><button class="btn sm" data-act="logout">Sair</button></div></div>`:''; })()}
   <div class="card"><h2>Equipe</h2>
     ${S.equipe.length?`<div style="margin-bottom:8px">${esc(eqNames(S.equipe))}</div>`:'<div class="mut" style="margin-bottom:8px">Nenhuma equipe escolhida.</div>'}
     <button class="btn pri" data-act="team">${S.equipe.length?'Alterar equipe':'Escolher equipe'}</button>
@@ -335,7 +350,6 @@ function viewMenu(){
   <div class="card"><h2>Base de dados</h2>
     <div><b>Gerada em ${esc(dispDT(parseDT(B.geradoEm)))}</b> <span class="mut small">(${baseGenDays()===0?'hoje':'há '+baseGenDays()+' d'})</span></div>
     <div class="small mut">Última verificação neste aparelho: ${v&&v.quando?esc(dispDT(new Date(v.quando)))+(v.ok?'':' (sem conexão)'):'nunca'}</div>
-    ${banner}
     <div class="row" style="margin-top:10px"><button class="btn" data-act="verif">Verificar atualização</button><button class="btn" data-act="reload">Recarregar página</button></div>
     <div class="row" style="margin-top:8px"><button class="btn sm" data-act="purge">Limpar registros já enviados</button></div>
     ${persistFail?'<div class="banner bad">Não foi possível salvar no aparelho (armazenamento bloqueado). Exporte os CSVs antes de fechar.</div>':''}
@@ -361,16 +375,36 @@ function openTeam(after){
 }
 
 /* ============ ORDENS ============ */
+function openMulti(k){ // seletor com vários itens (pátios / localidades)
+  const patios = [...new Set(B.os.map(o=>o.patio))].sort((a,b)=>patioIdx(a)-patioIdx(b));
+  const locs = [...new Set(B.os.filter(o=>!S.f.patios.length||S.f.patios.includes(o.patio)).map(o=>o.loc))].sort(cmp);
+  const lista = k==='patios' ? patios : locs, titulo = k==='patios' ? 'Pátios' : 'Localidades';
+  const sel = new Set(S.f[k]);
+  const ov = document.createElement('div'); ov.className='ov'; ov.style.zIndex=80;
+  ov.innerHTML = `<div class="sheet"><div class="sh"><h3>${titulo}</h3><button class="btn sm" data-mc>Limpar</button><button class="btn sm pri" data-mo>Aplicar</button></div>
+    <div class="team">${lista.map(p=>`<label class="${sel.has(p)?'on':''}"><input type="checkbox" value="${esc(p)}" ${sel.has(p)?'checked':''}><span class="grow"><b>${esc(p)}</b></span></label>`).join('')||'<div class="empty">Nada para escolher.</div>'}</div></div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => {
+    if(e.target===ov){ ov.remove(); return; }
+    if(e.target.closest('[data-mc]')){ ov.querySelectorAll('input').forEach(i=>{ i.checked=false; i.closest('label').classList.remove('on'); }); return; }
+    if(e.target.closest('[data-mo]')){
+      S.f[k] = [...ov.querySelectorAll('input:checked')].map(i=>i.value);
+      if(k==='patios') S.f.locs = [];
+      save(); ov.remove(); viewOrdens(); return; }
+    const lab = e.target.closest('label'); if(lab) setTimeout(()=>lab.classList.toggle('on', lab.querySelector('input').checked),0);
+  };
+}
 function viewOrdens(){
   const v = $('#view');
   const patios = [...new Set(B.os.map(o=>o.patio))].sort((a,b)=>patioIdx(a)-patioIdx(b));
-  const locs = [...new Set(B.os.filter(o=>!S.f.patio||o.patio===S.f.patio).map(o=>o.loc))].sort(cmp);
+  const locs = [...new Set(B.os.filter(o=>!S.f.patios.length||S.f.patios.includes(o.patio)).map(o=>o.loc))].sort(cmp);
   const tipos = [...new Set(B.os.map(o=>o.tipo).filter(Boolean))].sort(cmp);
-  if(S.f.loc && !locs.includes(S.f.loc)) S.f.loc='';
+  S.f.patios = S.f.patios.filter(p=>patios.includes(p)); S.f.locs = S.f.locs.filter(l=>locs.includes(l));
+  const rot = (arr, todos) => arr.length===0 ? todos : arr.length===1 ? arr[0] : arr.length+' selecionados';
   v.innerHTML = `
   <div class="card"><div class="filters">
-    <select data-f="patio" aria-label="Pátio"><option value="">Todos os pátios</option>${patios.map(p=>`<option ${S.f.patio===p?'selected':''}>${esc(p)}</option>`).join('')}</select>
-    <select data-f="loc" aria-label="Localidade"><option value="">Todas as localidades</option>${locs.map(p=>`<option ${S.f.loc===p?'selected':''}>${esc(p)}</option>`).join('')}</select>
+    <button class="msel ${S.f.patios.length?'on':''}" data-act="mf" data-k="patios" aria-label="Pátios"><span>${esc(rot(S.f.patios,'Todos os pátios'))}</span><i>▾</i></button>
+    <button class="msel ${S.f.locs.length?'on':''}" data-act="mf" data-k="locs" aria-label="Localidades"><span>${esc(rot(S.f.locs,'Todas as localidades'))}</span><i>▾</i></button>
     <input type="search" data-f="q" class="full" placeholder="Buscar ativo, OS, atividade ou descrição" value="${esc(S.f.q)}" aria-label="Buscar">
   </div></div>
   <div class="tools"><label><input type="checkbox" id="selAll"> Selecionar tudo</label>
@@ -382,7 +416,7 @@ function viewOrdens(){
 }
 function filtered(){
   const q = S.f.q.trim().toLowerCase();
-  return B.os.filter(o=>(!S.f.patio||o.patio===S.f.patio)&&(!S.f.loc||o.loc===S.f.loc)&&
+  return B.os.filter(o=>(!S.f.patios.length||S.f.patios.includes(o.patio))&&(!S.f.locs.length||S.f.locs.includes(o.loc))&&
     (!q||(o.ativo+' '+o.id+' '+o.atv+' '+o.desc).toLowerCase().includes(q)))
     .sort((a,b)=>patioIdx(a.patio)-patioIdx(b.patio)||cmp(a.ativo,b.ativo)||cmp(a.atv,b.atv));
 }
@@ -567,12 +601,12 @@ async function confirmSheet(){
     const rec = S.apont.find(x=>x.id===SH.recId);
     rec.os = osList; rec.equipe = SH.eq.slice(); rec.mats = SH.mats; rec.info = SH.info;
     if(rec.exportadoEm) rec.alteradoEm = isoDT(nowMin());
-    osList.forEach(x=>{ if(S.lote[x.id]) syncAutoExtra(x.id); });
+    osList.forEach(x=>{ if(S.lote[x.id]){ syncAutoExtra(x.id); syncAutoNota(x.id); } });
     toast('Apontamento atualizado.');
   } else {
     S.apont.push({id:uid(), criadoEm:isoDT(nowMin()), equipe:SH.eq.slice(), os:osList, mats:SH.mats, info:SH.info, exportadoEm:null, alteradoEm:null});
     setSel(SH.ids, false);
-    osList.forEach(x=>{ if(S.lote[x.id]) syncAutoExtra(x.id); });
+    osList.forEach(x=>{ if(S.lote[x.id]){ syncAutoExtra(x.id); syncAutoNota(x.id); } });
     const nl = osList.filter(x=>{ const lt = ltFor(x.id, SH.info); const st = lt && loteStatus(x.id, lt); return st && !st.ok; }).length;
     if(nl) toast(`${osList.length} OS apontadas. ${nl} com formulário pendente.`, 'Preencher', ()=>go('lotes'), 9000);
     else toast(`${osList.length} OS apontadas.`);
@@ -662,7 +696,7 @@ function setLote(osId, ltId, cod, val){
     if(B.lotesMap[ltId].q.includes(other)) e.v[other] = '0001 NÃO';
   }
   e.em = isoDT(nowMin()); e.exportadoEm = null; save();
-  syncAutoExtra(osId);
+  syncAutoExtra(osId); syncAutoNota(osId);
 }
 function loteItems(){
   const seen = new Map();
@@ -789,7 +823,8 @@ function viewNotas(){
         <div style="margin-top:4px"><b>${esc(n.cod)}</b> ${esc(n.nome)}</div><div class="small" style="margin-top:4px;white-space:pre-wrap">${esc(n.desc)}</div>
         ${n.area==='INFRA'?`<div class="small mut">KM ${esc(n.kmi)} → ${esc(n.kmf)}</div>`:''}
         <div class="tiny mut" style="margin-top:4px">${esc(n.data?dispD(parseD(n.data)):'')} · ${esc(n.eq||'')}${n.vinc?' · ordem extra vinculada':''}</div>
-        ${n.area==='EE' && n.st==='ABERTA' ? `<button class="btn sm pri" style="margin-top:8px" data-act="ntratar" data-id="${esc(n.id)}">Tratar (abrir ordem extra)</button>`:''}</div>`; }).join(''):'<div class="card"><div class="empty">Nenhuma nota nesta área.</div></div>'}`;
+        ${n.origem==='local' && !n.cod ? `<div class="banner warn">Nota automática da OS ${esc((S.notas.find(y=>y.id===n.id)||{}).auto||'')}: escolha a codificação para ela ser enviada.</div><button class="btn sm pri" style="margin-top:8px" data-act="ncod" data-id="${esc(n.id)}">Escolher codificação</button>`:''}
+        ${n.area==='EE' && n.st==='ABERTA' && n.cod ? `<button class="btn sm pri" style="margin-top:8px" data-act="ntratar" data-id="${esc(n.id)}">Tratar (abrir ordem extra)</button>`:''}</div>`; }).join(''):'<div class="card"><div class="empty">Nenhuma nota nesta área.</div></div>'}`;
 }
 function openNota(){
   const NS = {eq:S.equipe.slice(), area:'EE', ativo:'', patio:'', loc:'', tipo:'', cod:'', nome:'', desc:'', kmi:'', kmf:''};
@@ -959,6 +994,20 @@ function pickAtivo(cb){
   };
   draw();
 }
+// Necessidade de manutenção = SIM no formulário gera uma nota EE (rascunho até escolher a codificação)
+function syncAutoNota(osId){
+  let rec = null; for(const r of S.apont) if(r.os.some(o=>o.id===osId)) rec = r;
+  const e = S.lote[osId], sim = !!(e && isSim(e.v[CFG.LOTE.nec]));
+  const cur = S.notas.find(x=>x.auto===osId);
+  if(!rec || !sim){ if(cur && !sim && !cur.exportadoEm){ S.notas = S.notas.filter(x=>x!==cur); save(); } return; }
+  const inf = (rec.info && rec.info[osId]) || infoAny(osId);
+  const obs = String((e.v[CFG.LOTE.obs]||'')).trim();
+  const dados = {equipe:rec.equipe.slice(), data:rec.os[0].ini.slice(0,10), ativo:inf.ativo||'', patio:inf.patio||'', loc:inf.loc||'', tipo:((ativoMap().get(inf.ativo)||{}).tipo)||''};
+  const desc = obs || ('NECESSIDADE DE MANUTENÇÃO IDENTIFICADA NA OS '+osId);
+  if(cur){ if(!cur.exportadoEm){ Object.assign(cur, dados); if(cur.descAuto) cur.desc = desc; } }
+  else S.notas.push(Object.assign({id:'NOTA-'+uid(), auto:osId, descAuto:true, area:'EE', cod:'', nome:'', desc, kmi:'', kmf:'', criadoEm:isoDT(nowMin()), exportadoEm:null}, dados));
+  save();
+}
 // Manutenção imediata = SIM no formulário gera automaticamente uma ordem extra plano
 function syncAutoExtra(osId){
   let rec = null; for(const r of S.apont) if(r.os.some(o=>o.id===osId)) rec = r;
@@ -1000,7 +1049,7 @@ function exportGroups(day){
   const map = new Map();
   const get = eq => { const k = eqKey(eq); if(!map.has(k)) map.set(k,{eq:sortEq(eq),ap:[],nr:[],ex:[],nt:[],linhas:0,nmat:0,pend:0}); return map.get(k); };
   for(const r of S.apont) if(r.os[0].ini.slice(0,10)===day){ const g=get(r.equipe); g.ap.push(r); g.linhas+=r.os.length*r.equipe.length; g.nmat+=Object.values(r.mats||{}).reduce((a,x)=>a+x.length,0); if(!r.exportadoEm||r.alteradoEm) g.pend++; r.os.forEach(o=>{ const e=S.lote[o.id]; if(e && !e.exportadoEm && Object.keys(e.v).length && !(!r.exportadoEm||r.alteradoEm)) g.pend++; }); }
-  for(const n of S.notas) if(n.data===day){ const g=get(n.equipe); g.nt.push(n); if(!n.exportadoEm) g.pend++; }
+  for(const n of S.notas) if(n.data===day && n.cod){ const g=get(n.equipe); g.nt.push(n); if(!n.exportadoEm) g.pend++; }
   for(const x of S.extra) if(x.data===day){ const g=get(x.equipe); g.ex.push(x); g.nmat+=(x.mats||[]).length; if(!x.exportadoEm||x.alteradoEm) g.pend++; }
   for(const n of S.nrav) if(n.data===day){ const g=get(n.equipe||[]); g.nr.push(n); if(!n.exportadoEm) g.pend++; }
   return [...map.values()];
@@ -1041,12 +1090,33 @@ function download(f){
 async function apiEnviar(f){
   if(!CFG.API_URL || CFG.API_URL.startsWith('__')) throw new Error('envio não configurado');
   const r = await fetchT(CFG.API_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify({token:CFG.API_TOKEN, nome:f.name, csv:f.text})}, 45000);
+    body: JSON.stringify({mat:(getAuth()||{}).mat, cod:(getAuth()||{}).cod, nome:f.name, csv:f.text})}, 45000);
   let j = null; try{ j = await r.json(); }catch(e){}
+  if(j && !j.ok && (j.erro==='acesso' || j.erro==='bloqueado')){ if(j.erro==='acesso') setAuth(null); throw new Error(j.erro==='acesso' ? 'acesso negado: entre de novo com matrícula e código' : 'muitas tentativas, aguarde'); }
   if(!j || !j.ok) throw new Error((j && j.erro) || ('HTTP '+r.status));
   return j;
 }
 let UP_BUSY = 0;
+function getAuth(){ try{ const a = JSON.parse(localStorage.getItem(CFG.LS_AUTH)||'null'); return a && a.mat && a.cod ? a : null; }catch(e){ return null; } }
+function setAuth(a){ try{ if(a) localStorage.setItem(CFG.LS_AUTH, JSON.stringify(a)); else localStorage.removeItem(CFG.LS_AUTH); }catch(e){} }
+function showLogin(msg){
+  $('#app').innerHTML = `<div class="login"><h1 style="margin:0 0 4px">${esc(CFG.NOME)}</h1><div class="mut" style="margin-bottom:22px">Entre com sua matrícula e seu código pessoal. Peça o código ao administrador.</div>
+    <label>Matrícula<input id="lmat" inputmode="numeric" autocomplete="username" value=""></label>
+    <label>Código pessoal<input id="lcod" type="password" inputmode="numeric" autocomplete="current-password"></label>
+    ${msg?`<div class="banner bad" style="margin:0 0 12px">${esc(msg)}</div>`:''}
+    <button class="btn pri" id="lgo" style="width:100%">Entrar</button><div class="small mut" style="margin-top:12px">O primeiro acesso precisa de internet.</div></div>`;
+  $('#lgo').onclick = async () => {
+    const mat = $('#lmat').value.trim(), cod = $('#lcod').value.trim();
+    if(!mat || !cod){ showLogin('Informe matrícula e código.'); return; }
+    $('#lgo').disabled = true; $('#lgo').textContent = 'Verificando...';
+    try{
+      const r = await fetchT(CFG.API_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify({acao:'login', mat, cod})}, 20000);
+      const j = await r.json();
+      if(j && j.ok){ setAuth({mat, cod, nome:j.nome||''}); render(); verificar(true); }
+      else showLogin(j && j.erro==='bloqueado' ? 'Muitas tentativas. Aguarde 15 minutos.' : 'Matrícula ou código inválidos.');
+    }catch(e){ showLogin('Sem conexão com o servidor. Verifique a internet e tente de novo.'); }
+  };
+}
 async function doExport(i, modo){
   if(UP_BUSY) return;
   const g = exportGroups(EXP_DAY)[i];
@@ -1193,7 +1263,7 @@ async function verificar(silent){
   }catch(e){}
   S.verif = v; save();
   if(!silent) toast(v.novaVersao ? 'Há dados mais novos disponíveis.' : v.ok ? 'Você já está com os dados mais recentes.' : 'Sem conexão: usando os dados deste aparelho.');
-  if(S.ui.tab==='menu') render();
+  if(!document.querySelector('.ov,.dlg')) render();
 }
 function recarregar(){ location.href = location.href.split('#')[0].split('?')[0] + '?v=' + Date.now(); }
 
@@ -1219,12 +1289,15 @@ document.addEventListener('click', async e => {
   const act = b.dataset.act, id = b.dataset.id;
   switch(act){
     case 'tab': go(b.dataset.t); break;
+    case 'mf': openMulti(b.dataset.k); break;
+    case 'logout': if(await dialog({title:'Sair?', body:'<p>Para enviar apontamentos de novo será preciso entrar com matrícula e código. O que está salvo neste aparelho continua aqui.</p>', ok:'Sair', danger:true})){ setAuth(null); render(); } break;
     case 'team': openTeam(); break;
     case 'lote': openLote(id, b.dataset.lt); break;
     case 'lprev': lotePrev(b.dataset.lt); break;
     case 'xnew': openExtra(); break;
     case 'xedit': openExtra(S.extra.find(x=>x.id===id)); break;
     case 'nnew': openNota(); break;
+    case 'ncod': { const n = S.notas.find(y=>y.id===id); if(!n) break; const ls = B.notasCat.filter(c=>c.r==='EE' && (!n.tipo||c.t===n.tipo)); pickCod(ls, c=>{ n.cod=c.c; n.nome=c.n; save(); render(); toast('Codificação definida. A nota será enviada no CSV do dia.'); }); break; }
     case 'narea': S.ui.nArea = b.dataset.a; save(); viewNotas(); break;
     case 'ntratar': { const n = allNotas().find(y=>y.id===id); openExtra(null, {ativo:n.ativo, patio:n.patio, loc:n.loc, notas:[id]}); break; }
     case 'xdel': if(await dialog({title:'Excluir ordem extra?', body:`<p>${S.extra.find(x=>x.id===id).exportadoEm?'<b>Já foi enviada; avise o ADM.</b>':'Ela não será enviada.'}</p>`, ok:'Excluir', danger:true})){ S.extra = S.extra.filter(x=>x.id!==id); for(const k2 of Object.keys(S.nvinc)) if(S.nvinc[k2]===id) delete S.nvinc[k2]; save(); render(); } break;
@@ -1262,7 +1335,6 @@ document.addEventListener('click', async e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if(t.matches('[data-f="q"]')) return; // a busca já filtra no evento input; refazer a lista aqui engolia o primeiro toque após digitar
-  if(t.matches('[data-f]')){ S.f[t.dataset.f] = t.value; if(t.dataset.f==='patio') S.f.loc=''; save(); if(t.dataset.f==='patio') viewOrdens(); else updateLista(); }
   else if(t.matches('[data-pp]')){ S.ui[t.dataset.pp] = t.value; if(t.dataset.pp==='pPatio') S.ui.pLoc=''; save(); viewPend(); }
   else if(t.matches('[data-ui]')){ S.ui[t.dataset.ui] = t.checked; save(); if(SH) drawSheet(); else if(S.ui.tab==='ordens') updateLista(); else render(); }
   else if(t.id==='selAll'){
@@ -1288,10 +1360,10 @@ function openTeamFor(cb, cur){ // seletor de equipe reutilizável dentro da folh
 
 /* ============ INÍCIO ============ */
 S.sel = S.sel.filter(id => osById(id));
-render();
+if(apiOk() && !getAuth()) showLogin(); else render();
 window.addEventListener('online', ()=>{ const n=$('#net'); if(n) n.style.display='none'; verificar(true); });
 window.addEventListener('offline', ()=>{ const n=$('#net'); if(n) n.style.display=''; });
-if(navigator.onLine) verificar(true);
+if(navigator.onLine && (!apiOk() || getAuth())) verificar(true);
 </script>
 </body>
 </html>
