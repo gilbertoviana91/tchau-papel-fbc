@@ -202,7 +202,7 @@ function expand(b){ // base v3 compacta -> objetos usados pelo app
   b.lotesMap = Object.fromEntries(b.lotes.map(t=>[t.id,t]));
   b.av = (b.AV||[]).map(r=>({patio:b.P[r[0]],loc:b.LC[r[1]],ativo:r[2],tipo:(b.TP||[])[r[3]]||''}));
   b.notasCat = b.notasCat||[]; b.notas = b.notas||[];
-  b.os = b.os.map(r=>{ const a=b.AT[r[4]]; return {id:r[0],patio:b.P[r[1]],loc:b.LC[r[2]],ativo:r[3],atv:a,desc:b.DS[r[5]],tmin:r[6],tipo:parseAtv(a).equip||'',lt:r[7]>=0?b.lotes[r[7]].id:''}; });
+  b.os = b.os.map(r=>{ const a=b.AT[r[4]]; return {id:r[0],patio:b.P[r[1]],loc:b.LC[r[2]],ativo:r[3],atv:a,desc:b.DS[r[5]],tmin:r[6],tipo:parseAtv(a).equip||'',lt:r[7]>=0?b.lotes[r[7]].id:'',mes:(b.M&&r[8]!==undefined)?(b.M[r[8]]||''):''}; });
   return b;
 }
 let EMB = expand(JSON.parse($('#base-json').textContent));
@@ -214,12 +214,13 @@ let EMB = expand(JSON.parse($('#base-json').textContent));
     let E = JSON.parse($('#estado-json').textContent);
     try{ const C = JSON.parse(localStorage.getItem('tchauPapel2.estado')||'null'); if(C && C.geradoEm && (!E.geradoEm || C.geradoEm > E.geradoEm)) E = C; }catch(e){}
     const f = new Set((E.feitas||[]).map(String)); if(f.size) EMB.os = EMB.os.filter(o=>!f.has(o.id));
-    EMB.notas = E.notas||[]; EMB.estadoEm = E.geradoEm||''; }catch(e){}
+    EMB.notas = E.notas||[]; EMB.locaisSrv = E.locais||{}; EMB.estadoEm = E.geradoEm||''; }catch(e){}
 })();
 let S = loadState();
 let B = pickBase();
+applyLocais();
 
-function defaultState(){ return { equipe:[], sel:[], apont:[], nrav:[], extra:[], notas:[], nvinc:{}, lote:{}, f:{patios:[],locs:[],tipo:'',q:''}, ui:{det:true,ocultar:false,descSheet:true,acompAll:false,acompSo:true,tab:'menu'}, verif:null }; }
+function defaultState(){ return { equipe:[], sel:[], apont:[], nrav:[], extra:[], notas:[], nvinc:{}, lote:{}, locais:{}, f:{patios:[],locs:[],tipo:'',q:'',mes:''}, ui:{det:true,ocultar:false,descSheet:true,acompAll:false,acompSo:true,tab:'menu'}, verif:null }; }
 function loadState(){
   try{ const raw = localStorage.getItem(CFG.LS_KEY); if(raw){ const s = Object.assign(defaultState(), JSON.parse(raw)); s.ui = Object.assign(defaultState().ui, s.ui); s.f = Object.assign(defaultState().f, s.f); if(s.f.patio){ s.f.patios=[s.f.patio]; } if(s.f.loc){ s.f.locs=[s.f.loc]; } delete s.f.patio; delete s.f.loc; if(!Array.isArray(s.f.patios)) s.f.patios=[]; if(!Array.isArray(s.f.locs)) s.f.locs=[]; return s; } }catch(e){}
   return defaultState();
@@ -433,7 +434,7 @@ function viewOrdens(){
   const tipos = [...new Set(B.os.map(o=>o.tipo).filter(Boolean))].sort(cmp);
   S.f.patios = S.f.patios.filter(p=>patios.includes(p)); S.f.locs = S.f.locs.filter(l=>locs.includes(l));
   const rot = (arr, todos) => arr.length===0 ? todos : arr.length===1 ? arr[0] : arr.length+' selecionados';
-  v.innerHTML = `
+  v.innerHTML = mesBar() + `
   <div class="card"><div class="filters">
     <button class="msel ${S.f.patios.length?'on':''}" data-act="mf" data-k="patios" aria-label="Pátios"><span>${esc(rot(S.f.patios,'Todos os pátios'))}</span><i>▾</i></button>
     <button class="msel ${S.f.locs.length?'on':''}" data-act="mf" data-k="locs" aria-label="Localidades"><span>${esc(rot(S.f.locs,'Todas as localidades'))}</span><i>▾</i></button>
@@ -447,8 +448,8 @@ function viewOrdens(){
   updateLista();
 }
 function filtered(){
-  const q = S.f.q.trim().toLowerCase();
-  return B.os.filter(o=>(!S.f.patios.length||S.f.patios.includes(o.patio))&&(!S.f.locs.length||S.f.locs.includes(o.loc))&&
+  const q = S.f.q.trim().toLowerCase(), ms = mesSel();
+  return B.os.filter(o=>mesOk(ms)(o)&&(!S.f.patios.length||S.f.patios.includes(o.patio))&&(!S.f.locs.length||S.f.locs.includes(o.loc))&&
     (!q||(o.ativo+' '+o.id+' '+o.atv+' '+o.desc).toLowerCase().includes(q)))
     .sort((a,b)=>patioIdx(a.patio)-patioIdx(b.patio)||cmp(a.ativo,b.ativo)||cmp(a.atv,b.atv));
 }
@@ -1199,15 +1200,106 @@ function showFiles(files){
   };
 }
 
+
+/* ============ MÊS DO PLANO ============ */
+const MES_N = ['janeiro','fevereiro','marco','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+const mesNum = s => MES_N.indexOf(String(s||'').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''));
+const mesDist = n => { let d=(n-new Date().getMonth()+12)%12; return d>6 ? d-12 : d; };
+function mesesLista(){
+  const st = statusMap(), m = new Map();
+  for(const t of (B.totais||[])) if(t.m) m.set(t.m, m.get(t.m)||0);
+  for(const o of B.os) if(o.mes) m.set(o.mes, (m.get(o.mes)||0) + (st.has(o.id)?0:1));
+  return [...m.entries()].map(([nome,pend])=>({nome,pend})).sort((a,b)=>{ const x=mesNum(a.nome), y=mesNum(b.nome); return (x<0?99:mesDist(x))-(y<0?99:mesDist(y)) || cmp(a.nome,b.nome); });
+}
+function mesSel(){ // '' = sem filtro (um mês só ou base antiga) · '*' = todos · senão o nome do mês
+  const L = mesesLista(); if(L.length<2) return '';
+  if(S.f.mes==='*') return '*';
+  if(S.f.mes && L.some(x=>x.nome===S.f.mes)) return S.f.mes;
+  let best = null;
+  for(const x of L){ const n = mesNum(x.nome); if(n<0) continue; const d = mesDist(n); if(d===0) return x.nome; if(d<0 && (!best || d>best.d)) best = {d, nome:x.nome}; }
+  return best ? best.nome : L[0].nome;
+}
+const mesOk = sel => o => !sel || sel==='*' || !o.mes || o.mes===sel;
+function mesBar(){
+  const L = mesesLista(); if(L.length<2) return '';
+  const sel = mesSel();
+  return `<div class="card"><div class="tiny mut">Mês do plano</div><div class="chips">${L.map(x=>`<button class="cbtn ${x.pend?'has seg':''} ${sel===x.nome?'on':''}" data-act="mes" data-m="${esc(x.nome)}">${esc(x.nome)} · ${x.pend}</button>`).join('')}<button class="cbtn ${sel==='*'?'on':''}" data-act="mes" data-m="*">Todos</button></div></div>`;
+}
+
+/* ============ LOCAIS (pátio/localidade definidos pelo ADM) ============ */
+function totAdj(m,p,l,a,d){
+  let t = (B.totais||[]).find(x=>x.p===p&&x.l===l&&(x.m===undefined||x.m===m));
+  if(!t){ if(d<0) return; t = {p,l,t:0,s:0,c:0,m}; (B.totais = B.totais||[]).push(t); }
+  t.t = Math.max(0,t.t+d); if(a.ok&&a.fin==='SEG') t.s = Math.max(0,t.s+d); if(a.ok&&a.ci) t.c = Math.max(0,t.c+d);
+}
+function applyLocais(){
+  const L = Object.assign({}, B.locaisSrv||{}); for(const [k,v] of Object.entries(S.locais||{})) L[k] = {p:v.p,l:v.l,t:v.t};
+  const ks = Object.keys(L); if(!ks.length) return;
+  for(const o of B.os){
+    const v = L[o.ativo]; if(!v || o._lo || !(o.patio==='(sem pátio)'||o.loc==='(sem localidade)')) continue;
+    const a = parseAtv(o.atv); totAdj(o.mes,o.patio,o.loc,a,-1); o.patio = v.p; o.loc = v.l||'(sem localidade)'; o._lo = 1; totAdj(o.mes,o.patio,o.loc,a,+1);
+    if(v.t && !o.tipo) o.tipo = v.t;
+    if(!B.patios.includes(o.patio)) B.patios.push(o.patio);
+  }
+  for(const k of ks){ const v = L[k]; const e = (B.av||[]).find(x=>x.ativo===k); if(e){ if(e.patio==='(sem pátio)'||e.loc==='(sem localidade)'||!e.patio){ e.patio=v.p; e.loc=v.l||e.loc; } if(v.t&&!e.tipo) e.tipo=v.t; } else (B.av = B.av||[]).push({patio:v.p,loc:v.l,ativo:k,tipo:v.t||''}); }
+  B._am = null;
+}
+function semLocal(){
+  const m = new Map();
+  for(const o of B.os) if(o.patio==='(sem pátio)'||o.loc==='(sem localidade)'){ const e = m.get(o.ativo)||{ativo:o.ativo,n:0,patio:o.patio,loc:o.loc}; e.n++; m.set(o.ativo,e); }
+  return [...m.values()].sort((a,b)=>cmp(a.ativo,b.ativo));
+}
+let LOCENV = false;
+async function enviarLocais(){
+  if(LOCENV || !apiOk() || !(getAuth()||{}).adm) return;
+  const pend = Object.entries(S.locais||{}).filter(([k,v])=>!v.env); if(!pend.length) return;
+  LOCENV = true;
+  try{
+    const j = await admApi('adm_locais', {itens: pend.map(([k,v])=>({ativo:k,patio:v.p,loc:v.l,tipo:v.t||''}))});
+    if(j && j.ok){ pend.forEach(([k])=>{ if(S.locais[k]) S.locais[k].env = true; }); save(); toast('Locais enviados ao Excel ('+pend.length+'). A base será atualizada em alguns minutos.'); if(S.ui.tab==='acomp') viewAcomp(); }
+    else toast('Locais salvos neste aparelho, mas o envio falhou ('+((j&&j.erro)||'erro')+'). Vou tentar de novo.');
+  }catch(e){} finally{ LOCENV = false; }
+}
+function openLocais(){
+  const ov = document.createElement('div'); ov.className='ov'; ov.style.zIndex=80;
+  document.body.appendChild(ov);
+  const patios = (B.patios||[]).filter(p=>p!=='(sem pátio)');
+  const tipos = [...new Set([...(B.TP||[]), ...B.av.map(a=>a.tipo)].filter(Boolean))].sort(cmp);
+  const locsDe = p => [...new Set(B.av.filter(a=>a.patio===p).map(a=>a.loc).filter(l=>l&&l!=='(sem localidade)'))].sort(cmp);
+  let cur = null;
+  const lista = () => { const L = semLocal(); const pend = Object.values(S.locais||{}).filter(v=>!v.env).length;
+    ov.innerHTML = `<div class="sheet"><div class="sh"><h3>Ativos sem pátio/localidade</h3><button class="btn sm pri" data-x>Fechar</button></div>
+      ${pend?`<div class="small" style="color:var(--warn);margin-bottom:6px">${pend} definição(ões) ainda não enviada(s) ao Excel.</div>`:''}
+      <div class="team">${L.map(e=>`<label data-a="${esc(e.ativo)}"><span class="grow"><b>${esc(e.ativo)}</b><div class="small mut">${e.n} OS · ${esc(e.patio)} · ${esc(e.loc)}</div></span><span>›</span></label>`).join('')||'<div class="empty"><b>Todos os ativos têm pátio e localidade.</b></div>'}</div></div>`; };
+  const form = a => { cur = a; const e = semLocal().find(x=>x.ativo===a)||{ativo:a,patio:'',loc:''}; const p0 = patios.includes(e.patio)?e.patio:'';
+    ov.innerHTML = `<div class="sheet"><div class="sh"><h3>${esc(a)}</h3><button class="btn sm" data-b>Voltar</button></div>
+      <div class="card"><label class="small mut">Pátio</label><select id="lop"><option value="">Escolha…</option>${patios.map(p=>`<option ${p===p0?'selected':''}>${esc(p)}</option>`).join('')}</select>
+      <label class="small mut" style="margin-top:8px;display:block">Localidade</label><input type="text" id="lol" list="lodl" placeholder="Ex.: Eletro Barbacena" autocomplete="off"><datalist id="lodl">${locsDe(p0).map(l=>`<option value="${esc(l)}">`).join('')}</datalist>
+      <label class="small mut" style="margin-top:8px;display:block">Tipo do ativo (opcional)</label><input type="text" id="lot" list="lotl" autocomplete="off"><datalist id="lotl">${tipos.map(l=>`<option value="${esc(l)}">`).join('')}</datalist>
+      <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn pri" id="losv">Salvar</button></div>
+      <div class="tiny mut" style="margin-top:6px">Fica gravado na tabela Locais do Dados.xlsx e vale para todos depois da próxima atualização da base.</div></div></div>`; };
+  lista();
+  ov.onclick = e => {
+    if(e.target===ov || e.target.closest('[data-x]')){ ov.remove(); if(S.ui.tab==='acomp') viewAcomp(); return; }
+    if(e.target.closest('[data-b]')){ lista(); return; }
+    const lb = e.target.closest('label[data-a]'); if(lb){ e.preventDefault(); form(lb.dataset.a); return; }
+    if(e.target.closest('#losv')){
+      const p = $('#lop',ov).value, l = $('#lol',ov).value.trim().replace(/[;\r\n]+/g,' '), tp = $('#lot',ov).value.trim().replace(/[;\r\n]+/g,' ');
+      if(!p || !l){ toast('Escolha o pátio e informe a localidade.'); return; }
+      S.locais[cur] = {p, l, t:tp, env:false, em:isoDT(nowMin())}; save(); applyLocais(); enviarLocais(); lista(); toast('Definido. Enviando ao Excel…'); }
+  };
+  ov.onchange = e => { if(e.target.id==='lop'){ const dl = $('#lodl',ov); if(dl) dl.innerHTML = locsDe(e.target.value).map(l=>`<option value="${esc(l)}">`).join(''); } };
+}
+
 /* ============ ACOMPANHAMENTO ============ */
 const ACOMP_OPEN = new Set();
 const pct = (a,b) => b>0 ? Math.round(a*100/b) : 0;
 function acompData(){
-  const st = statusMap(), map = new Map();
+  const st = statusMap(), map = new Map(), ms = mesSel();
   const get = (p,l) => { const k=p+'|'+l; if(!map.has(k)) map.set(k,{p,l,t:0,s:0,c:0,pend:[],ps:0,pc:0}); return map.get(k); };
-  for(const t of (B.totais||[])){ const g=get(t.p,t.l); g.t=t.t; g.s=t.s; g.c=t.c; }
+  for(const t of (B.totais||[])){ if(ms && ms!=='*' && t.m!==undefined && t.m!==ms) continue; const g=get(t.p,t.l); g.t+=t.t; g.s+=t.s; g.c+=t.c; }
   for(const o of B.os){
-    if(st.has(o.id)) continue;
+    if(st.has(o.id) || !mesOk(ms)(o)) continue;
     const g = get(o.patio,o.loc), a = parseAtv(o.atv);
     g.pend.push(o); if(a.ok&&a.fin==='SEG') g.ps++; if(a.ok&&a.ci) g.pc++;
   }
@@ -1238,7 +1330,8 @@ function viewAcomp(){
   const C = 2*Math.PI*42, dash = C*pc/100;
   const donut = `<svg width="116" height="116" viewBox="0 0 116 116" role="img" aria-label="${pc}% concluído"><circle cx="58" cy="58" r="42" fill="none" stroke="var(--line)" stroke-width="14"/><circle cx="58" cy="58" r="42" fill="none" stroke="#2e9d5f" stroke-width="14" stroke-dasharray="${dash} ${C}" transform="rotate(-90 58 58)" stroke-linecap="butt"/><text x="58" y="55" text-anchor="middle" font-size="24" font-weight="700" fill="currentColor">${pc}%</text><text x="58" y="74" text-anchor="middle" font-size="11" fill="var(--mut)">concluído</text></svg>`;
   const kp = (lbl,np,t,cls) => `<div class="kpi" style="text-align:left"><span class="tiny mut">${lbl}</span><b style="color:${np?`var(--${cls})`:'var(--ok)'}">${np} <span class="small mut" style="font-weight:500">pend.</span></b><span class="small">de ${t} · ${pct(np,t)}%</span>${barHtml(np,t,true)}</div>`;
-  let h = `<div class="card"><h2>Plano de manutenção</h2>
+  const nsl = (getAuth()||{}).adm ? semLocal().length : 0;
+  let h = mesBar() + (nsl ? `<div class="card"><div class="row" style="justify-content:space-between"><span class="small"><b>${nsl}</b> ativo(s) sem pátio/localidade</span><button class="btn sm pri" data-act="locais">Definir</button></div></div>` : '') + `<div class="card"><h2>Plano de manutenção</h2>
     <div class="donutw">${donut}<div class="grow small"><div><b>${T.t}</b> programadas</div><div style="color:var(--ok)"><b>${done}</b> realizadas</div><div style="color:var(--warn)"><b>${T.np}</b> pendentes (${pct(T.np,T.t)}%)</div></div></div>
     <div class="grid2" style="margin-top:12px">${kp('Segurança (SEG)',T.ps,T.s,'seg')}${kp('Com intervalo (C·I)',T.pc,T.c,'ci')}</div>
     <div class="row" style="margin-top:12px"><label class="sw"><input type="checkbox" data-ui="acompAll" ${S.ui.acompAll?'checked':''}> Exibir OS pendentes de SEG e C·I</label>
@@ -1280,7 +1373,7 @@ async function refreshAuth(){
   try{ const j = await admApi('login'); if(j && j.ok){ if(!!j.adm!==!!a.adm){ a.adm=!!j.adm; setAuth(a); render(); } } else if(j && j.erro==='acesso'){ setAuth(null); showLogin('Seu acesso foi revogado ou o código mudou.'); } }catch(e){}
 }
 async function verificar(silent){
-  refreshAuth();
+  refreshAuth(); enviarLocais();
   const v = {quando:Date.now(), ok:false, novaVersao:null};
   try{
     if(apiOk()){
@@ -1327,6 +1420,8 @@ document.addEventListener('click', async e => {
   switch(act){
     case 'tab': go(b.dataset.t); break;
     case 'mf': openMulti(b.dataset.k); break;
+    case 'mes': S.f.mes = b.dataset.m; save(); if(S.ui.tab==='acomp') viewAcomp(); else viewOrdens(); break;
+    case 'locais': openLocais(); break;
     case 'adm_novo': { const p = (ADM.lista||[]).find(x=>x.mat===id); if(p && await dialog({title:'Gerar novo código?', body:`<p>O código atual de <b>${esc(p.nome||id)}</b> deixa de valer.</p>`, ok:'Gerar'})) admAcao('adm_novo', {alvo:id}, p.nome||id); break; }
     case 'adm_rev': { const p = (ADM.lista||[]).find(x=>x.mat===id); if(p && await dialog({title:'Revogar acesso?', body:`<p><b>${esc(p.nome||id)}</b> não poderá mais enviar. Um novo código reativa.</p>`, ok:'Revogar', danger:true})) admAcao('adm_revogar', {alvo:id}); break; }
     case 'adm_inc': { const m = prompt('Matrícula da pessoa:'); if(!m) break; const n = prompt('Nome:'); if(!n) break; admAcao('adm_incluir', {alvo:m.trim(), nome:n.trim()}, n.trim()); break; }
