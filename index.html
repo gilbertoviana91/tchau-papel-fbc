@@ -205,9 +205,10 @@ function expand(b){ // base v3 compacta -> objetos usados pelo app
   b.os = b.os.map(r=>{ const a=b.AT[r[4]]; return {id:r[0],patio:b.P[r[1]],loc:b.LC[r[2]],ativo:r[3],atv:a,desc:b.DS[r[5]],tmin:r[6],tipo:parseAtv(a).equip||'',lt:r[7]>=0?b.lotes[r[7]].id:'',mes:(b.M&&r[8]!==undefined)?(b.M[r[8]]||''):''}; });
   return b;
 }
+function baseOk(C){ try{ if(!C||C.v!==3||!Array.isArray(C.os)||!C.os.length) return false; const s=new Set(); let ruim=0; for(const r of C.os){ const id=String(r[0]); if(!/^\d+$/.test(id)||s.has(id)) ruim++; s.add(id); } return ruim<=C.os.length*0.05; }catch(e){ return false; } }
 let EMB = expand(JSON.parse($('#base-json').textContent));
 (function usarBaseArmazenada(){ // base mais nova baixada do Apps Script (gerada a partir do Dados.xlsx)
-  try{ const C = JSON.parse(localStorage.getItem(CFG.LS_BASE)||'null'); if(C && C.v===3 && C.geradoEm && C.geradoEm > (EMB.geradoEm||'')){ if(!C.materiais) C.materiais = EMB.materiais; EMB = expand(C); } }catch(e){}
+  try{ const C = JSON.parse(localStorage.getItem(CFG.LS_BASE)||'null'); if(C && C.v===3 && C.geradoEm && C.geradoEm > (EMB.geradoEm||'') && baseOk(C)){ if(!C.materiais) C.materiais = EMB.materiais; EMB = expand(C); } }catch(e){}
 })();
 (function aplicarEstado(){ // estado dinâmico (vem do Apps Script): OS já tratadas + notas abertas
   try{
@@ -1385,7 +1386,7 @@ async function verificar(silent){
         if(E.baseEm && E.baseEm > (EMB.geradoEm||'')){
           const rb = await fetchT(apiUrl('r=base'), {cache:'no-store'}, 40000);
           const Bn = await rb.json();
-          if(Bn && Bn.v===3 && Bn.geradoEm){ try{ localStorage.setItem(CFG.LS_BASE, JSON.stringify(Bn)); v.novaVersao = Bn.geradoEm; }catch(e){} }
+          if(Bn && Bn.v===3 && Bn.geradoEm && baseOk(Bn)){ try{ localStorage.setItem(CFG.LS_BASE, JSON.stringify(Bn)); v.novaVersao = Bn.geradoEm; }catch(e){} }
         }
         try{ localStorage.setItem(CFG.LS_SYNC, String(Date.now())); }catch(e){}
       }
